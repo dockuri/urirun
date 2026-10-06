@@ -38,8 +38,9 @@
       <button class="primary" id="capture" disabled>Scan now</button>
       <button class="primary" id="best" disabled>Best PDF</button>
       <select id="bestCount">
-        <option value="6">6 frames</option>
+        <option value="3" selected>3 frames</option>
         <option value="4">4 frames</option>
+        <option value="6">6 frames</option>
         <option value="8">8 frames</option>
       </select>
       <select id="quality">
@@ -47,9 +48,9 @@
         <option value="0.82">JPEG 82%</option>
         <option value="0.70">JPEG 70%</option>
       </select>
-      <label class="field">Scan interval (s)<input type="number" id="scanInterval" min="1" max="60" step="0.5" inputmode="decimal"></label>
+      <label class="field">Scan interval (s)<input type="number" id="scanInterval" min="0.5" max="60" step="0.5" inputmode="decimal"></label>
       <label class="inline-check"><input type="checkbox" id="startBest" checked> best after start</label>
-      <label class="inline-check"><input type="checkbox" id="auto"> <span id="autoIntervalLabel">auto every 3s</span></label>
+      <label class="inline-check"><input type="checkbox" id="auto"> <span id="autoIntervalLabel">auto every 1s</span></label>
     </div>
     <p class="status">Use this page from the phone on the same LAN. Mobile browsers usually require HTTPS or a trusted local exception for camera access.</p>
   </main>

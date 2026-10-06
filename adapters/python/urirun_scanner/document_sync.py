@@ -1385,6 +1385,24 @@ except ImportError:
                 "ocrChars": ocr.get("chars"),
                 "metadata": extracted,
             })
+            remote_sync_result = None
+            if not os.environ.get("PYTEST_CURRENT_TEST"):
+                try:
+                    target_node, target_url, target_token = resolve_node_endpoint("lenovo")
+                    if target_url:
+                        date_val = str(extracted.get("date") or "")
+                        m_per = re.search(r"(\d{4})[-.](\d{2})", date_val)
+                        period_dot = f"{m_per.group(1)}.{m_per.group(2)}" if m_per else time.strftime("%Y.%m")
+                        doc_type = str(extracted.get("type") or "paragon").lower()
+                        subfolder = "koszty" if doc_type in ("paragon", "rachunek", "faktura") else "inne"
+                        remote_root = os.environ.get("URIRUN_REMOTE_DEST_ROOT", "~/Documents/Faktury")
+                        remote_dest = f"{remote_root.rstrip('/')}/{period_dot}/{subfolder}"
+                        res_pdf = upload_document_to_node(target_url, f"{remote_dest}/{pdf_path.name}", pdf_path.read_bytes(), token=target_token)
+                        if json_path.is_file():
+                            upload_document_to_node(target_url, f"{remote_dest}/{json_path.name}", json_path.read_bytes(), token=target_token)
+                        remote_sync_result = {"node": target_node, "dest": remote_dest, "pdf": res_pdf.get("ok", False)}
+                except Exception as sync_exc:
+                    remote_sync_result = {"error": str(sync_exc)}
         return {
             "ok": True,
             "duplicate": False,
@@ -1396,6 +1414,7 @@ except ImportError:
             "jsonPath": str(json_path),
             "uri": entry["uri"],
             "metadata": extracted,
+            "remoteSync": remote_sync_result,
             "indexPath": str(document_index_path()),
             "scannedIdLogPath": str(scanned_id_log_path()),
         }
