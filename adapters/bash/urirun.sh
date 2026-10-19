@@ -15,3 +15,14 @@ urirun_command() {
 urirun_document() {
   printf '{"version":"%s","bindings":{%s}}\n' "$URIRUN_BINDINGS_VERSION" "$1"
 }
+
+# uri <full-uri> [json-or-jsonl]
+# Universal shell helper to invoke a dockuri URI process with inline JSON/JSONL or stdin.
+uri() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import sys, urirun; raise SystemExit(urirun.uri_cli(sys.argv[1:]))' "$@"
+  else
+    command uri "$@"
+  fi
+}
+

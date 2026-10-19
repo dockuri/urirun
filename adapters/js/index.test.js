@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildInvocation, dispatch, parseUri } from './index.js';
+import { buildInvocation, dispatch, parseUri, uri } from './index.js';
 
 test('parses URI into descriptor', () => {
   assert.deepEqual(parseUri('device://device-01/led/set/on?trace=1#ui'), {
@@ -50,3 +50,29 @@ test('rejects missing packages and functions', async () => {
   await assert.rejects(() => dispatch('device://device-01/led/set/on', {}, {}), /Unknown package/);
   await assert.rejects(() => dispatch('device://device-01/led/set/on', { device: {} }, {}), /Unknown function/);
 });
+
+test('invokes uri() with single payload, inline URI+JSON, and JSONL batch', async () => {
+  const registry = {
+    plesk: {
+      site_command(target, action, payload) {
+        return { ok: true, target, action, domain: payload.domain };
+      },
+    },
+  };
+
+  const single = await uri('plesk://host/site/command/sync', { domain: 'heyasa.com' }, { registry });
+  assert.deepEqual(single, { ok: true, target: 'host', action: 'sync', domain: 'heyasa.com' });
+
+  const inline = await uri('plesk://host/site/command/sync {"domain":"get.heyasa.com"}', null, { registry });
+  assert.deepEqual(inline, { ok: true, target: 'host', action: 'sync', domain: 'get.heyasa.com' });
+
+  const batch = await uri(
+    'plesk://host/site/command/sync',
+    '{"domain":"heyasa.com"}\n{"domain":"get.heyasa.com"}',
+    { registry },
+  );
+  assert.equal(batch.length, 2);
+  assert.equal(batch[0].domain, 'heyasa.com');
+  assert.equal(batch[1].domain, 'get.heyasa.com');
+});
+

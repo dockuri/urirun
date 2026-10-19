@@ -498,6 +498,182 @@ def run(
     )
 
 
+def _parse_uri_invocations(
+    address: str = "",
+    payload: Any = None,
+    *,
+    jsonl: str | None = None,
+) -> tuple[list[tuple[str, dict]], bool]:
+    """Normalize (address, payload, jsonl) into a list of (uri, payload_dict) steps and batch flag."""
+    raw_addr = (address or "").strip()
+    inline_text = jsonl
+    if inline_text is None and isinstance(payload, str):
+        inline_text = payload
+        payload = None
+    if inline_text is None and payload is None and raw_addr:
+        parts = re.split(r"[\s\r\n]+", raw_addr, maxsplit=1)
+        if len(parts) == 2 and URI_RE.match(parts[0]) and parts[1].lstrip().startswith(("{", "[")):
+            raw_addr, inline_text = parts[0], parts[1]
+
+    if inline_text is not None:
+        lines = [ln.strip() for ln in str(inline_text).splitlines() if ln.strip()]
+        if not lines:
+            return ([(raw_addr, {})], False) if raw_addr else ([], True)
+        steps: list[tuple[str, dict]] = []
+        is_batch = len(lines) > 1 or jsonl is not None or "\n" in str(inline_text).strip()
+        for ln in lines:
+            item = json.loads(ln)
+            if isinstance(item, list):
+                is_batch = True
+                for sub in item:
+                    s_uri, s_pay = _extract_step_item(raw_addr, sub)
+                    steps.append((s_uri, s_pay))
+            else:
+                s_uri, s_pay = _extract_step_item(raw_addr, item)
+                steps.append((s_uri, s_pay))
+        return steps, is_batch
+
+    if isinstance(payload, list):
+        return [_extract_step_item(raw_addr, item) for item in payload], True
+
+    s_uri, s_pay = _extract_step_item(raw_addr, payload if payload is not None else {})
+    return [(s_uri, s_pay)], False
+
+
+def _extract_step_item(default_uri: str, item: Any) -> tuple[str, dict]:
+    if not isinstance(item, dict):
+        if not default_uri:
+            raise ValueError("URI address is required")
+        return default_uri, {"value": item}
+    step_uri = str(item.get("uri") or default_uri).strip()
+    if not step_uri:
+        raise ValueError("URI address is required either as argument or 'uri' field in JSONL item")
+    if "payload" in item and isinstance(item["payload"], dict):
+        return step_uri, dict(item["payload"])
+    if "uri" in item and not default_uri:
+        return step_uri, {k: v for k, v in item.items() if k != "uri"}
+    return step_uri, dict(item)
+
+
+def _invoke_single_uri(
+    step_uri: str,
+    step_payload: dict,
+    *,
+    registry: dict | None = None,
+    node_url: str | None = None,
+    mode: str = "execute",
+    allow: list[str] | None = None,
+    raw_envelope: bool = False,
+):
+    import os
+    import urllib.request
+
+    descriptor = parse_uri(step_uri)
+    merged_payload = {**descriptor["query"], **(step_payload or {})}
+    effective_node = node_url or os.environ.get("URIRUN_NODE_URL")
+    if effective_node and registry is None:
+        req_body = json.dumps({"uri": step_uri, "payload": merged_payload, "mode": mode}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{effective_node.rstrip('/')}/call",
+            data=req_body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+            env = json.loads(resp.read().decode("utf-8"))
+        return env if raw_envelope else result_data(env)
+
+    reg = registry if registry is not None else entry_point_registry()
+    if isinstance(reg, dict) and "routes" not in reg and "bindings" not in reg and descriptor["package"] in reg:
+        return dispatch(step_uri, reg, merged_payload)
+    if isinstance(reg, dict) and "bindings" in reg and "routes" not in reg:
+        reg = compile_registry(reg)
+    scheme = descriptor["package"]
+    pol = policy(allow=_step_allow_policy(allow, scheme))
+    env = run(step_uri, reg, payload=merged_payload, mode=mode, policy=pol)
+    return env if raw_envelope else result_data(env)
+
+
+def uri(
+    address: str = "",
+    payload: Any = None,
+    *,
+    jsonl: str | None = None,
+    registry: dict | None = None,
+    node_url: str | None = None,
+    mode: str = "execute",
+    allow: list[str] | None = None,
+    raw: bool = False,
+):
+    """Universal URI process invoker for single JSON or batch JSONL calls.
+
+    Supports:
+    - ``uri("plesk://host/site/command/sync", {"domain": "heyasa.com"})``
+    - ``uri("plesk://host/site/command/sync", '{"domain":"heyasa.com"}\\n{"domain":"get.heyasa.com"}')``
+    - ``uri('plesk://host/site/command/sync {"domain":"heyasa.com"}')``
+    - ``uri(jsonl='{"uri":"plesk://host/site/command/sync","payload":{"domain":"heyasa.com"}}')``
+    """
+    steps, is_batch = _parse_uri_invocations(address, payload, jsonl=jsonl)
+    results = [
+        _invoke_single_uri(
+            s_uri,
+            s_pay,
+            registry=registry,
+            node_url=node_url,
+            mode=mode,
+            allow=allow,
+            raw_envelope=raw,
+        )
+        for s_uri, s_pay in steps
+    ]
+    return results if is_batch else (results[0] if results else {})
+
+
+def uri_cli(argv: list[str] | None = None) -> int:
+    """CLI entrypoint for ``uri <full-uri> [json|jsonl]``."""
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="uri",
+        description="Universal dockuri URI process runner (single JSON or batch JSONL).",
+    )
+    parser.add_argument("address", nargs="?", default="", help="Full URI address or 'URI JSON/JSONL'")
+    parser.add_argument("payload", nargs="?", default=None, help="Inline JSON or JSONL payload, or '-' for stdin")
+    parser.add_argument("--dry-run", action="store_true", help="Plan/validate without executing side effects")
+    parser.add_argument("--raw", action="store_true", help="Return full runtime execution envelope")
+    parser.add_argument("--jsonl", action="store_true", help="Emit JSONL (one JSON object per line)")
+    parser.add_argument("--node-url", default=None, help="Remote urirun node URL (or URIRUN_NODE_URL)")
+    args = parser.parse_args(argv)
+
+    payload_text = args.payload
+    if payload_text == "-" or (payload_text is None and not sys.stdin.isatty()):
+        stdin_data = sys.stdin.read()
+        if stdin_data.strip():
+            payload_text = stdin_data
+        elif payload_text == "-":
+            payload_text = ""
+
+    if not args.address and not payload_text:
+        parser.print_help(sys.stderr)
+        return 2
+
+    mode = "dry-run" if args.dry_run else "execute"
+    out = uri(
+        args.address,
+        payload_text,
+        node_url=args.node_url,
+        mode=mode,
+        raw=args.raw,
+    )
+    if args.jsonl and isinstance(out, list):
+        for item in out:
+            print(json.dumps(item, ensure_ascii=False))
+    else:
+        print(json.dumps(out, ensure_ascii=False))
+    return 0
+
+
 from ._connector import (  # noqa: E402
     Connector,
     connector,
@@ -506,3 +682,4 @@ from ._connector import (  # noqa: E402
     connector_cli,
     connector_main,
 )
+

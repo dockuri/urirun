@@ -36,6 +36,7 @@
     "workstreams": {
       "application": {
         "ownedPaths": [
+          "adapters/**",
           "src/**",
           "app/**",
           "lib/**",
@@ -46,6 +47,7 @@
       },
       "governance": {
         "ownedPaths": [
+          "adapters/**",
           ".aider.conf.yml",
           ".cursor/rules/**",
           ".githooks/**",
