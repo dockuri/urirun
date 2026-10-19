@@ -23,7 +23,7 @@
       autostart: '1',
       auto: '1',
       best: '1',
-      count: '6',
+      count: '3',
       minScore: '45',
     };
 
@@ -36,7 +36,7 @@
         }
       });
       if (!scannerParams.has('interval') && !scannerParams.has('scanInterval') && !scannerParams.has('intervalMs')) {
-        scannerParams.set('interval', '3');
+        scannerParams.set('interval', '1');
         changed = true;
       }
       if (!changed) return;
@@ -451,7 +451,8 @@
       bestRunning = true;
       bestBtn.disabled = true;
       captureBtn.disabled = true;
-      const total = Number(options.count || document.getElementById('bestCount').value || '6');
+      const selectedCount = Number(document.getElementById('bestCount')?.value || 0);
+      const total = Number(selectedCount > 0 ? selectedCount : (options.count || numericParam('count', 3)));
       const intervalMs = scanIntervalMs(options);
       const seriesId = `best-${Date.now()}-${Math.random().toString(16).slice(2)}`;
       try {
@@ -471,8 +472,9 @@
     }
 
     function bestOptions(options={}) {
+      const selectedCount = Number(document.getElementById('bestCount')?.value || 0);
       return {
-        count: Number(options.count || numericParam('count', Number(document.getElementById('bestCount').value || '6'))),
+        count: Number(selectedCount > 0 ? selectedCount : (options.count || numericParam('count', 3))),
         minScore: resolveMinScore(options),
         intervalMs: scanIntervalMs(options),
       };
@@ -620,7 +622,7 @@
     function applyInitialScannerOptions() {
       startBest.checked = truthyParam('best', startBest.checked);
       auto.checked = truthyParam('auto', auto.checked);
-      const count = String(numericParam('count', Number(bestCount.value || '6')));
+      const count = String(numericParam('count', Number(bestCount.value || '3')));
       if ([...bestCount.options].some((option) => option.value === count)) bestCount.value = count;
       const qualityValue = scannerParams.get('quality');
       if (qualityValue && [...quality.options].some((option) => option.value === qualityValue)) quality.value = qualityValue;
@@ -665,6 +667,18 @@
     });
     scanInterval.addEventListener('change', updateIntervalFromControl);
     scanInterval.addEventListener('blur', updateIntervalFromControl);
+    bestCount.addEventListener('change', () => {
+      const val = String(bestCount.value);
+      scannerParams.set('count', val);
+      writeScannerUrlState();
+      announce('count-changed', {count: Number(val)}).catch(() => {});
+    });
+    quality.addEventListener('change', () => {
+      const val = String(quality.value);
+      scannerParams.set('quality', val);
+      writeScannerUrlState();
+      announce('quality-changed', {quality: val}).catch(() => {});
+    });
     auto.addEventListener('change', () => {
       if (auto.checked && !stream) {
         beginAutonomousScanning({auto: true, startBest: startBest.checked}).catch((err) => setState(err.message, true));

@@ -1,0 +1,33 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-001",
+  "summary": "Add universal uri() function and uri CLI across polyglot adapters (closes #9)",
+  "workstream": "governance",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P1",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-001/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    ".governance/manifest.json",
+    "adapters/python/urirun/__init__.py",
+    "adapters/python/pyproject.toml",
+    "adapters/python/tests/test_uri_api.py",
+    "adapters/js/index.js",
+    "adapters/js/index.test.js",
+    "adapters/ts/urirun.ts",
+    "adapters/php/Urirun.php",
+    "adapters/bash/urirun.sh",
+    ".cursor/rules/new-project-standard.mdc"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}

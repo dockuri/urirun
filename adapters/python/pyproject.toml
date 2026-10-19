@@ -32,6 +32,7 @@ host = ["planfile>=0.1.117", "litellm>=1.60", "qrcode[pil]>=7", "docid>=0.1.9", 
 test = ["planfile>=0.1.117", "pytest>=7"]
 
 [project.scripts]
+uri = "urirun:uri_cli"
 urirun = "urirun.v2:main"
 urirun-v1 = "urirun.v1:main"
 urirun-v2 = "urirun.v2:main"

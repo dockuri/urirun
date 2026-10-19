@@ -340,6 +340,9 @@ def _handle_post_scanner(handler, parsed, project, db, config, node_urls, token,
             uri_invoke(project, db, config, payload, node_urls=node_urls, token=token, identity=identity),
         )
         return True
+    if parsed.path == "/api/uri/event":
+        _json_response(handler, 200, {"ok": True})
+        return True
     if parsed.path == "/api/page/actions/result":
         payload = _read_json(handler)
         _json_response(handler, 200, _page_action_result_impl(_scanner_bridge_deps(), db, payload, utc_now=_utc_now))

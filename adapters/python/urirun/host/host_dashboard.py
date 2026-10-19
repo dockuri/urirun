@@ -48,7 +48,9 @@ from .document_sync import (
     merge_metadata_fields as _merge_metadata_fields,
     enrich_archived_record as _enrich_archived_record,
     backfill_scanned_id_log as _backfill_scanned_id_log,
+    route_scanned_documents as _route_scanned_documents_impl,
 )
+from .android_node import phone_web_nodes
 from .discovery import (
     add_node_aliases as _add_node_aliases_impl,
     alias_map_from_dict as _alias_map_from_dict_impl,
@@ -712,6 +714,8 @@ def scanner_best_finish(project: str, db: str | None, payload: dict) -> dict:
         archive_fn=_archive_scanned_document,
         local_image_ocr_fn=_local_image_ocr,
         truthy_env_fn=_truthy_env,
+        auto_crop_receipt_fn=_auto_crop_receipt,
+        extract_document_metadata_fn=_extract_document_metadata,
     )
 
 
@@ -1039,6 +1043,12 @@ def _uri_invoke_route(effective_uri: str, *, project: str, db: str | None, confi
             token=token,
             identity=identity,
         )
+    if effective_uri in {
+        "document://host/archive/command/route-scans",
+        "proc://fin/scanner/route/v1",
+        "proc://fin/scanner/route-scan/v1",
+    }:
+        return _route_scanned_documents_impl(action_payload)
     return _UNROUTED
 
 
@@ -1294,12 +1304,23 @@ def create_handler(
             _json_response(self, 200, {"ok": True})
 
         def do_GET(self):
+            if getattr(self.server, "urirun_scheme", "http") == "https" and not isinstance(self.connection, ssl.SSLSocket):
+                host_hdr = self.headers.get("Host") or f"127.0.0.1:{self.server.server_address[1]}"
+                self.send_response(302)
+                self.send_header("Location", f"https://{host_hdr}{self.path}")
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                return
             parsed = urlparse(self.path)
             try:
                 _handle_get(self, parsed, project, db, config, node_urls, token, identity)
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 return
             except Exception as exc:  # noqa: BLE001
+                import traceback
+                print(f"[scanner-http-error] GET {self.path} failed: {exc}\n{traceback.format_exc()}", flush=True)
                 try:
                     _json_response(self, 500, {"ok": False, "error": str(exc)})
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
@@ -1313,13 +1334,19 @@ def create_handler(
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 return
             except Exception as exc:  # noqa: BLE001
+                import traceback
+                print(f"[scanner-http-error] POST {self.path} failed: {exc}\n{traceback.format_exc()}", flush=True)
                 try:
                     _json_response(self, 400, {"ok": False, "error": str(exc)})
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                     return
 
         def log_message(self, fmt, *args: Any):
-            return
+            msg = fmt % args
+            # Log all requests except repetitive noise
+            if ("GET /api/scanner/live" in msg or "GET /api/page/actions/poll" in msg) and "200" in msg:
+                return
+            print(f"[scanner-http] {self.address_string()} {msg}", flush=True)
 
     return Handler
 
@@ -1357,8 +1384,30 @@ def serve(
     if tls_cert and tls_key:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(os.path.expanduser(tls_cert), os.path.expanduser(tls_key))
-        server.socket = context.wrap_socket(server.socket, server_side=True)
         scheme = "https"
+        orig_get_request = server.get_request
+
+        def secure_get_request():
+            sock, addr = orig_get_request()
+            try:
+                sock.settimeout(3.0)
+                peek = sock.recv(1, socket.MSG_PEEK)
+                if peek == b"\x16":
+                    tls_sock = context.wrap_socket(sock, server_side=True)
+                    tls_sock.settimeout(None)
+                    return tls_sock, addr
+                else:
+                    sock.settimeout(None)
+                    return sock, addr
+            except Exception:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+                raise
+
+        server.get_request = secure_get_request
+    setattr(server, "urirun_scheme", scheme)
     qr = startup_phone_qr(project, db, scheme=scheme, host=host, port=server.server_address[1], qr_url=qr_url) if startup_qr else None
     print(json.dumps({
         "event": "urirun.host_dashboard.started",

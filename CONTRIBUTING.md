@@ -38,3 +38,16 @@ submit through [connect.ifuri.com](https://connect.ifuri.com). Every connector e
 
 ## License
 By contributing you agree your work is licensed under this repository's `LICENSE`.
+
+## Governance Policy DSL
+
+```dsl
+DOCUMENT CONTRIBUTING
+VERSION 1
+MODE STRICT
+PURPOSE "Repository contribution and governance policy"
+
+RULE CONTRIB-001 TYPE REQUIRED
+WHEN change.ticket_allocated = TRUE
+DO REQUIRE governance_gate
+```
