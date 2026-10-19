@@ -555,18 +555,67 @@ def _extract_step_item(default_uri: str, item: Any) -> tuple[str, dict]:
     return step_uri, dict(item)
 
 
-_CACHED_EP_REGISTRY: tuple[int, dict] | None = None
+_DEFAULT_EP_REGISTRY_FN = entry_point_registry
+_CACHED_EP_REGISTRY: tuple[int, str, dict] | None = None
 _CACHED_PY_HANDLERS: dict[tuple[str, str], Any] = {}
+
+
+def _ep_cache_fingerprint() -> str:
+    import sys
+    import sysconfig
+    from pathlib import Path
+
+    sp = Path(sysconfig.get_path("purelib") or sys.prefix)
+    try:
+        st = sp.stat()
+        return f"{sys.prefix}:{st.st_mtime_ns}:{st.st_size}"
+    except OSError:
+        return sys.prefix
+
+
+def _load_or_build_default_ep_registry(fp: str) -> dict:
+    import contextlib
+    import io
+    import os
+    import pickle
+    from pathlib import Path
+
+    cache_file = Path(os.environ.get("URIRUN_EP_CACHE_FILE") or (Path.home() / ".cache" / "urirun" / "ep_registry_v2.pkl"))
+    if os.environ.get("URIRUN_DISABLE_EP_CACHE") != "1" and cache_file.is_file():
+        try:
+            cached_fp, cached_reg = pickle.loads(cache_file.read_bytes())  # noqa: S301
+            if cached_fp == fp and isinstance(cached_reg, dict):
+                return cached_reg
+        except Exception:
+            pass
+    if os.environ.get("URIRUN_VERBOSE_ENTRYPOINTS") == "1":
+        reg = entry_point_registry()
+    else:
+        with contextlib.redirect_stderr(io.StringIO()):
+            reg = entry_point_registry()
+    try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_bytes(pickle.dumps((fp, reg), protocol=pickle.HIGHEST_PROTOCOL))
+    except Exception:
+        pass
+    return reg
 
 
 def _get_cached_entry_point_registry() -> dict:
     global _CACHED_EP_REGISTRY
     fn_id = id(entry_point_registry)
-    if _CACHED_EP_REGISTRY is not None and _CACHED_EP_REGISTRY[0] == fn_id:
-        return _CACHED_EP_REGISTRY[1]
-    reg = entry_point_registry()
-    _CACHED_EP_REGISTRY = (fn_id, reg)
+    fp = _ep_cache_fingerprint() if entry_point_registry is _DEFAULT_EP_REGISTRY_FN else "custom"
+    if _CACHED_EP_REGISTRY is not None and _CACHED_EP_REGISTRY[0] == fn_id and _CACHED_EP_REGISTRY[1] == fp:
+        return _CACHED_EP_REGISTRY[2]
+    reg = _load_or_build_default_ep_registry(fp) if entry_point_registry is _DEFAULT_EP_REGISTRY_FN else entry_point_registry()
+    _CACHED_EP_REGISTRY = (fn_id, fp, reg)
     return reg
+
+
+def _normalize_status(out: Any) -> Any:
+    if isinstance(out, dict) and "status" not in out:
+        out["status"] = "ok" if (out.get("ok", True) is not False and "error" not in out) else "error"
+    return out
 
 
 def _try_inproc_route(step_uri: str, descriptor: dict, reg: dict, merged_payload: dict, mode: str, raw_envelope: bool) -> tuple[bool, Any]:
@@ -613,8 +662,8 @@ def _try_inproc_route(step_uri: str, descriptor: dict, reg: dict, merged_payload
     with contextlib.redirect_stdout(sys.stderr):
         out = fn(**call_kwargs)
     if raw_envelope:
-        return True, {"uri": step_uri, "mode": mode, "kind": route.get("kind"), "adapter": route.get("adapter"), "ok": True, "result": out}
-    return True, out
+        return True, {"uri": step_uri, "mode": mode, "kind": route.get("kind"), "adapter": route.get("adapter"), "ok": True, "status": "ok", "result": out}
+    return True, _normalize_status(out)
 
 
 def _invoke_single_uri(
@@ -657,7 +706,7 @@ def _invoke_single_uri(
         )
         with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
             env = json.loads(resp.read().decode("utf-8"))
-        return env if raw_envelope else result_data(env)
+        return env if raw_envelope else _normalize_status(result_data(env))
 
     reg = registry if registry is not None else _get_cached_entry_point_registry()
     if isinstance(reg, dict) and "routes" not in reg and "bindings" not in reg and scheme in reg:
@@ -680,7 +729,7 @@ def _invoke_single_uri(
 
     pol = policy(allow=_step_allow_policy(allow, scheme))
     env = run(step_uri, reg, payload=merged_payload, mode=mode, policy=pol)
-    return env if raw_envelope else result_data(env)
+    return env if raw_envelope else _normalize_status(result_data(env))
 
 
 def uri(

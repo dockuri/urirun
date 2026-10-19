@@ -102,3 +102,16 @@ def test_uri_jsonl_and_two_segment_normalization():
     assert len(batch) == 1
     assert batch[0]["domain"] == "a.com"
 
+
+def test_uri_disk_cache_and_status_normalization(tmp_path, monkeypatch):
+    cache_path = tmp_path / "ep_reg.pkl"
+    monkeypatch.setenv("URIRUN_EP_CACHE_FILE", str(cache_path))
+    urirun._CACHED_EP_REGISTRY = None
+    reg1 = urirun._load_or_build_default_ep_registry("fp-test")
+    assert cache_path.is_file()
+    reg2 = urirun._load_or_build_default_ep_registry("fp-test")
+    assert reg2.get("routes") == reg1.get("routes")
+    assert urirun._normalize_status({"ok": True}) == {"ok": True, "status": "ok"}
+    assert urirun._normalize_status({"ok": False}) == {"ok": False, "status": "error"}
+
+
