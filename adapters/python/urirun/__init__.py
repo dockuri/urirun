@@ -716,12 +716,13 @@ def _invoke_single_uri(
 
     if isinstance(reg, dict) and isinstance(reg.get("routes"), dict):
         s_routes = reg["routes"].get(scheme)
-        if isinstance(s_routes, dict) and len(descriptor["segments"]) == 1:
-            cand_res = descriptor["target"]
-            cand_act = descriptor["segments"][0]
-            if isinstance(s_routes.get(cand_res), dict) and cand_act in s_routes[cand_res]:
-                step_uri = f"{scheme}://host/{cand_res}/{cand_act}"
+        if isinstance(s_routes, dict):
+            if len(descriptor["segments"]) == 1:
+                step_uri = f"{scheme}://host/{descriptor['target']}/{descriptor['segments'][0]}"
                 descriptor = parse_uri(step_uri)
+            if descriptor["segments"][:2] == ["doctor", "query"] and not (isinstance(s_routes.get("doctor"), dict) and "query" in s_routes["doctor"]):
+                doc_out = {"ok": True, "status": "ready", "connector": f"urirun-connector-{scheme}", "scheme": scheme, "configured": True, "resources": sorted(s_routes.keys())}
+                return {"uri": step_uri, "mode": mode, "kind": "query", "adapter": "builtin-doctor", "ok": True, "status": "ok", "result": doc_out} if raw_envelope else doc_out
 
     handled, fast_out = _try_inproc_route(step_uri, descriptor, reg, merged_payload, mode, raw_envelope)
     if handled:
