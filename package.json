@@ -17,11 +17,17 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test adapters/js/*.test.js"
+    "test": "node --test adapters/js/*.test.js",
+    "prepare": "bash scripts/install-agent-hosts.sh"
   },
   "license": "Apache-2.0",
   "author": {
     "name": "Tom Sapletta",
     "email": "tom@sapletta.com"
+  },
+  "wellmanifest": {
+    "standard": "0.20.35",
+    "revision": "cfaa0bf0ea6b0e7349fed0bb62b5ce15792d687d",
+    "gate": "project/governance-check.sh"
   }
 }
