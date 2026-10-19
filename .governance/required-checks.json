@@ -1,15 +1,10 @@
 {
   "$schema": "./required-checks.schema.json",
-  "schema": "new-project.required-checks/v2",
+  "schema": "new-project.required-checks/v1",
   "repository": "dockuri/urirun",
   "workflowFile": ".github/workflows/new-project-governance.yml",
   "requiredCheckNames": [
+    "governance / remote lifecycle",
     "governance / enforce"
-  ],
-  "requiredChecks": [
-    {
-      "name": "governance / enforce",
-      "workflowFile": ".github/workflows/new-project-governance.yml"
-    }
   ]
 }
