@@ -555,6 +555,68 @@ def _extract_step_item(default_uri: str, item: Any) -> tuple[str, dict]:
     return step_uri, dict(item)
 
 
+_CACHED_EP_REGISTRY: tuple[int, dict] | None = None
+_CACHED_PY_HANDLERS: dict[tuple[str, str], Any] = {}
+
+
+def _get_cached_entry_point_registry() -> dict:
+    global _CACHED_EP_REGISTRY
+    fn_id = id(entry_point_registry)
+    if _CACHED_EP_REGISTRY is not None and _CACHED_EP_REGISTRY[0] == fn_id:
+        return _CACHED_EP_REGISTRY[1]
+    reg = entry_point_registry()
+    _CACHED_EP_REGISTRY = (fn_id, reg)
+    return reg
+
+
+def _try_inproc_route(step_uri: str, descriptor: dict, reg: dict, merged_payload: dict, mode: str, raw_envelope: bool) -> tuple[bool, Any]:
+    import contextlib
+    import importlib
+    import inspect
+    import os
+    import sys
+
+    if mode != "execute" or os.environ.get("URIRUN_FORCE_SUBPROCESS") == "1":
+        return False, None
+    routes = reg.get("routes") if isinstance(reg, dict) else None
+    if not isinstance(routes, dict):
+        return False, None
+    scheme = descriptor["package"]
+    scheme_routes = routes.get(scheme)
+    if not isinstance(scheme_routes, dict):
+        return False, None
+    segs = descriptor["segments"]
+    if len(segs) < 2:
+        return False, None
+    res_node = scheme_routes.get(segs[0])
+    route = res_node.get(segs[1]) if isinstance(res_node, dict) else None
+    if not isinstance(route, dict) or route.get("adapter") not in ("local-function", "local-function-subprocess"):
+        return False, None
+    py_spec = route.get("python")
+    if not isinstance(py_spec, dict) or not py_spec.get("module") or not py_spec.get("export"):
+        return False, None
+    key = (str(py_spec["module"]), str(py_spec["export"]))
+    fn = _CACHED_PY_HANDLERS.get(key)
+    if fn is None:
+        try:
+            fn = getattr(importlib.import_module(key[0]), key[1])
+            _CACHED_PY_HANDLERS[key] = fn
+        except Exception:
+            return False, None
+    call_kwargs = dict(merged_payload)
+    try:
+        params = inspect.signature(fn).parameters
+        if not any(p.kind == p.VAR_KEYWORD for p in params.values()):
+            call_kwargs = {k: v for k, v in call_kwargs.items() if k in params}
+    except (TypeError, ValueError):
+        pass
+    with contextlib.redirect_stdout(sys.stderr):
+        out = fn(**call_kwargs)
+    if raw_envelope:
+        return True, {"uri": step_uri, "mode": mode, "kind": route.get("kind"), "adapter": route.get("adapter"), "ok": True, "result": out}
+    return True, out
+
+
 def _invoke_single_uri(
     step_uri: str,
     step_payload: dict,
@@ -566,10 +628,24 @@ def _invoke_single_uri(
     raw_envelope: bool = False,
 ):
     import os
+    from pathlib import Path
+    import sys
     import urllib.request
 
     descriptor = parse_uri(step_uri)
     merged_payload = {**descriptor["query"], **(step_payload or {})}
+    scheme = descriptor["package"]
+
+    if registry is None and scheme in ("proc", "willman"):
+        try:
+            cand = Path.home() / "github" / "dockuri" / "dockuri" / "python"
+            if cand.is_dir() and str(cand) not in sys.path:
+                sys.path.insert(0, str(cand))
+            import dockuri_uri
+            return dockuri_uri.uri(step_uri, merged_payload)
+        except Exception:
+            pass
+
     effective_node = node_url or os.environ.get("URIRUN_NODE_URL")
     if effective_node and registry is None:
         req_body = json.dumps({"uri": step_uri, "payload": merged_payload, "mode": mode}).encode("utf-8")
@@ -583,12 +659,25 @@ def _invoke_single_uri(
             env = json.loads(resp.read().decode("utf-8"))
         return env if raw_envelope else result_data(env)
 
-    reg = registry if registry is not None else entry_point_registry()
-    if isinstance(reg, dict) and "routes" not in reg and "bindings" not in reg and descriptor["package"] in reg:
+    reg = registry if registry is not None else _get_cached_entry_point_registry()
+    if isinstance(reg, dict) and "routes" not in reg and "bindings" not in reg and scheme in reg:
         return dispatch(step_uri, reg, merged_payload)
     if isinstance(reg, dict) and "bindings" in reg and "routes" not in reg:
         reg = compile_registry(reg)
-    scheme = descriptor["package"]
+
+    if isinstance(reg, dict) and isinstance(reg.get("routes"), dict):
+        s_routes = reg["routes"].get(scheme)
+        if isinstance(s_routes, dict) and len(descriptor["segments"]) == 1:
+            cand_res = descriptor["target"]
+            cand_act = descriptor["segments"][0]
+            if isinstance(s_routes.get(cand_res), dict) and cand_act in s_routes[cand_res]:
+                step_uri = f"{scheme}://host/{cand_res}/{cand_act}"
+                descriptor = parse_uri(step_uri)
+
+    handled, fast_out = _try_inproc_route(step_uri, descriptor, reg, merged_payload, mode, raw_envelope)
+    if handled:
+        return fast_out
+
     pol = policy(allow=_step_allow_policy(allow, scheme))
     env = run(step_uri, reg, payload=merged_payload, mode=mode, policy=pol)
     return env if raw_envelope else result_data(env)
@@ -605,14 +694,7 @@ def uri(
     allow: list[str] | None = None,
     raw: bool = False,
 ):
-    """Universal URI process invoker for single JSON or batch JSONL calls.
-
-    Supports:
-    - ``uri("plesk://host/site/command/sync", {"domain": "heyasa.com"})``
-    - ``uri("plesk://host/site/command/sync", '{"domain":"heyasa.com"}\\n{"domain":"get.heyasa.com"}')``
-    - ``uri('plesk://host/site/command/sync {"domain":"heyasa.com"}')``
-    - ``uri(jsonl='{"uri":"plesk://host/site/command/sync","payload":{"domain":"heyasa.com"}}')``
-    """
+    """Universal URI process invoker for single JSON or batch JSONL calls."""
     steps, is_batch = _parse_uri_invocations(address, payload, jsonl=jsonl)
     results = [
         _invoke_single_uri(
@@ -627,6 +709,13 @@ def uri(
         for s_uri, s_pay in steps
     ]
     return results if is_batch else (results[0] if results else {})
+
+
+def uri_jsonl(address: str, lines: Any, **kwargs: Any) -> list[Any]:
+    """Stream JSONL lines or dicts into a URI process."""
+    res = uri(address, list(lines) if not isinstance(lines, str) else lines, **kwargs)
+    return res if isinstance(res, list) else [res]
+
 
 
 def uri_cli(argv: list[str] | None = None) -> int:

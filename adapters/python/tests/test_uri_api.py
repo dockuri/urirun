@@ -80,3 +80,25 @@ def test_uri_cli_dry_run(capsys, monkeypatch):
     assert len(lines) == 2
     assert lines[0]["command"] == ["echo", "heyasa.com"]
     assert lines[1]["command"] == ["echo", "get.heyasa.com"]
+
+
+def test_uri_jsonl_and_two_segment_normalization():
+    reg = {
+        "routes": {
+            "demo": {
+                "doctor": {
+                    "query": {
+                        "kind": "query",
+                        "adapter": "local-function-subprocess",
+                        "python": {"module": "json", "export": "dumps"},
+                    }
+                }
+            }
+        }
+    }
+    res = urirun.uri("demo://doctor/query", {"obj": {"ok": True}}, registry=reg)
+    assert json.loads(res) == {"ok": True}
+    batch = urirun.uri_jsonl("plesk://host/site/command/sync", [{"domain": "a.com"}], registry=_demo_registry())
+    assert len(batch) == 1
+    assert batch[0]["domain"] == "a.com"
+
