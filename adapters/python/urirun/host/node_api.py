@@ -47,14 +47,13 @@ def configured_api_secret(auth: dict, *, allow: list[str] | None = None) -> str:
 def apply_auth_header(headers: dict, auth: dict, auth_type: str, secret: str) -> str | None:
     if auth_type in {"bearer", "oauth", "token"}:
         headers.setdefault("Authorization", f"Bearer {secret}")
-    elif auth_type in {"api-key", "apikey", "key"}:
-        headers.setdefault(str(auth.get("headerName") or auth.get("header") or "X-API-Key"), secret)
-    elif auth_type in {"header", "custom-header"}:
-        headers.setdefault(str(auth.get("headerName") or auth.get("header") or "Authorization"), secret)
+    elif auth_type in {"api-key", "apikey", "key", "header", "custom-header"}:
+        default_hdr = "X-API-Key" if auth_type in {"api-key", "apikey", "key"} else "Authorization"
+        headers.setdefault(str(auth.get("headerName") or auth.get("header") or default_hdr), secret)
     elif auth_type == "basic":
         user = str(auth.get("username") or "")
-        token = base64.b64encode(f"{user}:{secret}".encode("utf-8")).decode("ascii")
-        headers.setdefault("Authorization", f"Basic {token}")
+        encoded = base64.b64encode(f"{user}:{secret}".encode("utf-8")).decode("ascii")
+        headers.setdefault("Authorization", f"Basic {encoded}")
     else:
         return f"unsupported auth type {auth_type!r}"
     return None

@@ -177,24 +177,24 @@ def chat_ask(project: str, db: str | None, config: str | None, payload: dict, no
 
 def task_action(project: str, ticket_id: str, action: str, payload: dict) -> dict:
     planfile_adapter = _planfile_adapter()
-    if action == "start":
-        ticket = planfile_adapter.start_ticket(project, ticket_id, assigned_to=payload.get("assigned_to"))
-    elif action == "complete":
-        ticket = planfile_adapter.complete_ticket(project, ticket_id, note=payload.get("note"), result=payload.get("result"), artifacts=payload.get("artifacts"))
-    elif action == "block":
-        ticket = planfile_adapter.block_ticket(
+    handlers = {
+        "start": lambda: planfile_adapter.start_ticket(project, ticket_id, assigned_to=payload.get("assigned_to")),
+        "complete": lambda: planfile_adapter.complete_ticket(
+            project, ticket_id, note=payload.get("note"), result=payload.get("result"), artifacts=payload.get("artifacts")
+        ),
+        "block": lambda: planfile_adapter.block_ticket(
             project,
             ticket_id,
             reason=str(payload.get("reason") or "Blocked from dashboard"),
             note=payload.get("note"),
-        )
-    elif action == "ready":
-        ticket = planfile_adapter.ready_ticket(project, ticket_id, note=payload.get("note"))
-    elif action == "fail":
-        ticket = planfile_adapter.fail_ticket(project, ticket_id, str(payload.get("error") or "failed from dashboard"))
-    else:
+        ),
+        "ready": lambda: planfile_adapter.ready_ticket(project, ticket_id, note=payload.get("note")),
+        "fail": lambda: planfile_adapter.fail_ticket(project, ticket_id, str(payload.get("error") or "failed from dashboard")),
+    }
+    handler = handlers.get(action)
+    if handler is None:
         raise ValueError(f"unsupported task action: {action}")
-    return {"ok": True, "ticket": ticket}
+    return {"ok": True, "ticket": handler()}
 
 
 
